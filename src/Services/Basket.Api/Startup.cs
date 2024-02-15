@@ -43,9 +43,9 @@ namespace Basket.Api
             // MassTransit-RabbitMQ Configration
             services.AddMassTransit(config =>
             {
-                config.UsingRabbitMq((ctx, cgf) =>
+                config.UsingRabbitMq((ctx, cfg) =>
                 {
-                    cgf.Host(Configuration["EventBusSettings:HostAddress"]);
+                    cfg.Host(Configuration["EventBusSettings:HostAddress"]);
                 });
             });
             //services.AddMassTransitHostedService(); //final version from MassTransit dosn't required this line
