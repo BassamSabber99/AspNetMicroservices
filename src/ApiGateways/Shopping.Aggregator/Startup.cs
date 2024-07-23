@@ -6,11 +6,17 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
+using Polly.Extensions.Http;
+using Polly;
 using Shopping.Aggregator.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using HealthChecks.UI.Client;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 
 namespace Shopping.Aggregator
 {
@@ -28,13 +34,22 @@ namespace Shopping.Aggregator
         {
 
             services.AddHttpClient<ICatalogService, CatalogService>(c =>
-                c.BaseAddress = new Uri(Configuration["ApiSettings:CatalogUrl"]));
+                c.BaseAddress = new Uri(Configuration["ApiSettings:CatalogUrl"]))
+                //.AddHttpMessageHandler<LoggingDelegatingHandler>()
+                .AddPolicyHandler(GetRetryPolicy())
+                .AddPolicyHandler(GetCircuitBreakerPolicy());
 
             services.AddHttpClient<IBasketService, BasketService>(c =>
-                c.BaseAddress = new Uri(Configuration["ApiSettings:BasketUrl"]));
+                c.BaseAddress = new Uri(Configuration["ApiSettings:BasketUrl"]))
+                //.AddHttpMessageHandler<LoggingDelegatingHandler>()
+                .AddPolicyHandler(GetRetryPolicy())
+                .AddPolicyHandler(GetCircuitBreakerPolicy());
 
             services.AddHttpClient<IOrderService, OrderService>(c =>
-                c.BaseAddress = new Uri(Configuration["ApiSettings:OrderingUrl"]));
+                c.BaseAddress = new Uri(Configuration["ApiSettings:OrderingUrl"]))
+                //.AddHttpMessageHandler<LoggingDelegatingHandler>()
+                .AddPolicyHandler(GetRetryPolicy())
+                .AddPolicyHandler(GetCircuitBreakerPolicy());
 
 
             services.AddControllers();
@@ -42,6 +57,11 @@ namespace Shopping.Aggregator
             {
                 c.SwaggerDoc("v1", new OpenApiInfo { Title = "Shopping.Aggregator", Version = "v1" });
             });
+
+            services.AddHealthChecks()
+                .AddUrlGroup(new Uri($"{Configuration["ApiSettings:CatalogUrl"]}/swagger/index.html"), "Catalog.API", HealthStatus.Degraded)
+                .AddUrlGroup(new Uri($"{Configuration["ApiSettings:BasketUrl"]}/swagger/index.html"), "Basket.API", HealthStatus.Degraded)
+                .AddUrlGroup(new Uri($"{Configuration["ApiSettings:OrderingUrl"]}/swagger/index.html"), "Ordering.API", HealthStatus.Degraded);
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -61,7 +81,43 @@ namespace Shopping.Aggregator
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapControllers();
+                endpoints.MapHealthChecks("/hc", new HealthCheckOptions()
+                {
+                    Predicate = _ => true,
+                    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+                });
             });
         }
+
+        private static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy()
+        {
+            // In this case will wait for
+            //  2 ^ 1 = 2 seconds then
+            //  2 ^ 2 = 4 seconds then
+            //  2 ^ 3 = 8 seconds then
+            //  2 ^ 4 = 16 seconds then
+            //  2 ^ 5 = 32 seconds
+
+            return HttpPolicyExtensions
+                .HandleTransientHttpError()
+                .WaitAndRetryAsync(
+                    retryCount: 5,
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                    onRetry: (exception, retryCount, context) =>
+                    {
+                        //Log.Error($"Retry {retryCount} of {context.PolicyKey} at {context.OperationKey}, due to: {exception}.");
+                    });
+        }
+
+        private static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy()
+        {
+            return HttpPolicyExtensions
+                .HandleTransientHttpError()
+                .CircuitBreakerAsync(
+                    handledEventsAllowedBeforeBreaking: 5,
+                    durationOfBreak: TimeSpan.FromSeconds(30)
+                );
+        }
+
     }
 }

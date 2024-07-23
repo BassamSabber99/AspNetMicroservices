@@ -1,21 +1,17 @@
 using EventBus.Messages.Common;
+using HealthChecks.UI.Client;
 using MassTransit;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.HttpsPolicy;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using Ordering.Api.EventBusConsumer;
 using Ordering.Application;
 using Ordering.Infrastructure;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+using Ordering.Infrastructure.Persistence;
 
 namespace Ordering.Api
 {
@@ -35,28 +31,33 @@ namespace Ordering.Api
             services.AddApplicationServices();
             services.AddInfrastructureServices(Configuration);
 
-            services.AddControllers();
-            services.AddSwaggerGen(c =>
-            {
-                c.SwaggerDoc("v1", new OpenApiInfo { Title = "Ordering.Api", Version = "v1" });
-            });
+            // MassTransit-RabbitMQ Configuration
+            services.AddMassTransit(config => {
 
-            services.AddMassTransit(config =>
-            {
                 config.AddConsumer<BasketCheckoutConsumer>();
-                config.UsingRabbitMq((ctx, cfg) =>
-                {
+
+                config.UsingRabbitMq((ctx, cfg) => {
                     cfg.Host(Configuration["EventBusSettings:HostAddress"]);
-                    cfg.ReceiveEndpoint(EventBusConstants.BasketCheckoutQueue, c =>
-                    {
+                    cfg.UseHealthCheck(ctx);
+
+                    cfg.ReceiveEndpoint(EventBusConstants.BasketCheckoutQueue, c => {
                         c.ConfigureConsumer<BasketCheckoutConsumer>(ctx);
                     });
                 });
             });
 
-            services.AddAutoMapper(typeof(Startup));
+            // General Configuration
             services.AddScoped<BasketCheckoutConsumer>();
+            services.AddAutoMapper(typeof(Startup));
 
+            services.AddControllers();
+            services.AddSwaggerGen(c =>
+            {
+                c.SwaggerDoc("v1", new OpenApiInfo { Title = "Ordering.API", Version = "v1" });
+            });
+
+            services.AddHealthChecks()
+                    .AddDbContextCheck<OrderContext>();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -77,6 +78,11 @@ namespace Ordering.Api
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapControllers();
+                endpoints.MapHealthChecks("/hc", new HealthCheckOptions
+                {
+                    Predicate = _ => true,
+                    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+                });
             });
         }
     }

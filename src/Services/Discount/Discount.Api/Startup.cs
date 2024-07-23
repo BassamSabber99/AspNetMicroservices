@@ -1,5 +1,7 @@
 using Discount.Api.Repositories;
+using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -34,6 +36,9 @@ namespace Discount.Api
             {
                 c.SwaggerDoc("v1", new OpenApiInfo { Title = "Discount.Api", Version = "v1" });
             });
+
+            services.AddHealthChecks()
+               .AddNpgSql(Configuration["DatabaseSettings:ConnectionString"]);
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -53,6 +58,11 @@ namespace Discount.Api
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapControllers();
+                endpoints.MapHealthChecks("/hc", new HealthCheckOptions
+                {
+                    Predicate = _ => true,
+                    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+                });
             });
         }
     }
